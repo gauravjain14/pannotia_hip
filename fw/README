@@ -1,0 +1,2 @@
+hipcc -o fw_hip ../compatibility.cpp parse.cpp ../graph_parser/util.cpp Floyd-Warshall.cpp --amdgpu-target=gfx801
+
