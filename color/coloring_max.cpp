@@ -1,4 +1,3 @@
-//#include "hip/hip_runtime.h"
 /************************************************************************************\ 
  *                                                                                  *
  * Copyright © 2014 Advanced Micro Devices, Inc.                                    *
@@ -56,7 +55,7 @@
  *                                                                                  *
 \************************************************************************************/
 
-#include <cuda.h>
+#include "hip/hip_runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -67,10 +66,7 @@
 
 #ifdef GEM5_FUSION
 #include <stdint.h>
-extern "C" {
-void m5_work_begin(uint64_t workid, uint64_t threadid);
-void m5_work_end(uint64_t workid, uint64_t threadid);
-}
+#include <gem5/m5ops.h>
 #endif
 
 #define RANGE 2048

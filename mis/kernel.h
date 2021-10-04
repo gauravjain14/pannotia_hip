@@ -1,4 +1,3 @@
-#include "hip/hip_runtime.h"
 /************************************************************************************\
  *                                                                                  *
  * Copyright � 2014 Advanced Micro Devices, Inc.                                    *
@@ -56,7 +55,10 @@
  *                                                                                  *
 \************************************************************************************/
 
+#ifndef KERNEL_H
+#define KERNEL_H
 
+#include "hip/hip_runtime.h"
 
 #define BIGNUM 99999999
 
@@ -193,4 +195,4 @@ mis3(int *cu_array, int *c_array, int num_nodes)
     }
 }
 
-
+#endif // KERNEL_H

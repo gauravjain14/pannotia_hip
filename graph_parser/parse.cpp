@@ -222,6 +222,7 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
 
     fclose(fptr);
     free(tuple_array);
+    free(line);
 
     return csr;
 

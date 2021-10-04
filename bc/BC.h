@@ -106,11 +106,11 @@ void transform(CooTuple *tuple_array, int num_edges, int *row_array, int *col_ar
 
 csr_array * parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool directed)
 {
-
     int cnt = 0;
     int cnt1 = 0;
     unsigned int lineno = 0;
-    char line[128], sp[2], a, p;
+    char sp[2], a, p;
+    char * line = (char *)malloc(8192 * sizeof(char));
     int num_nodes = 0, num_edges = 0;
 
     FILE *fptr;
@@ -120,18 +120,18 @@ csr_array * parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dir
     fptr = fopen(tmpchar, "r");
     if (!fptr) {
         fprintf(stderr, "Error when opennning file: %s\n", tmpchar);
+        perror("ERROR: ");
         exit(1);
     }
 
     printf("Opening file: %s\n", tmpchar);
 
-    while (fgets(line, 100, fptr)) {
+    while (fgets(line, 8192, fptr)) {
         int head, tail, weight;
         switch (line[0]) {
         case 'c':
             break;
         case 'p':
-
             sscanf(line, "%c %s %d %d", &p, sp, p_num_nodes, p_num_edges);
 
             if (!directed) {
@@ -194,8 +194,6 @@ csr_array * parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dir
         lineno++;
     }
 
-
-
     std::stable_sort(tuple_array,   tuple_array   + num_edges, compare);
     std::stable_sort(tuple_array_t, tuple_array_t + num_edges, compare);
 
@@ -224,7 +222,8 @@ csr_array * parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dir
     csr -> col_array_t  = col_array_t;
     csr -> data_array_t = data_array_t;
 
-    return csr;
+    free(line);
 
+    return csr;
 }
 

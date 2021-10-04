@@ -1,4 +1,3 @@
-#include "hip/hip_runtime.h"
 /************************************************************************************\
  *                                                                                  *
  * Copyright � 2014 Advanced Micro Devices, Inc.                                    *
@@ -56,6 +55,10 @@
  *                                                                                  *
 \************************************************************************************/
 
+#ifndef KERNEL_H
+#define KERNEL_H
+
+#include "hip/hip_runtime.h"
 #define BIG_NUM 99999999
 
 /**
@@ -183,3 +186,4 @@ vector_diff(int *vector1, int *vector2, int *stop, const int num_nodes)
     }
 }
 
+#endif // KERNEL_H

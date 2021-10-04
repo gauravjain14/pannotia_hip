@@ -1,31 +1,23 @@
-################################################################################
-#
-# Build script for project
-#
-################################################################################
+HIP_PATH ?= /opt/rocm/hip
+HIPCC = $(HIP_PATH)/bin/hipcc
 
-# Add source files here
-BASEEXE		:= fw
-VARIANT ?= DEFAULT
-# CUDA source files (compiled with cudacc)
-CUFILES		:= 
-CU_DEPS		:= 
-ifeq ($(VARIANT),DEFAULT)
-	EXECUTABLE = $(BASEEXE)
-	CUFILES += Floyd-Warshall.cu
-	CU_DEPS += kernel.cu
-else ifeq ($(VARIANT),BLOCK)
-	EXECUTABLE = $(BASEEXE)_block
-	CUFILES += Floyd-Warshall-Block.cu
-	CU_DEPS += kernel_block.cu
-endif
+# these are needed for m5ops
+# TODO: Need some sort of explicit PATH?  Read in?
+GEM5_PATH ?= /nobackup/sinclair/gem5
+CFLAGS += -I$(GEM5_PATH)/include
+LDFLAGS += -L$(GEM5_PATH)/util/m5/build/x86/out -lm5
 
-# C/C++ source files (compiled with gcc / c++)
-CCFILES	:= ../graph_parser/util.cpp parse.cpp
-INCFLAGEXTRA	:= -I../graph_parser
+BIN_DIR ?= ./bin
 
+all: $(BIN_DIR)/fw_hip.gem5
 
-################################################################################
-# Rules and targets
+$(BIN_DIR)/fw_hip.gem5: Floyd-Warshall.cpp parse.cpp ../graph_parser/util.cpp $(BIN_DIR)
+	$(HIPCC) -O3 --amdgpu-target=gfx801,gfx803 $(CXXFLAGS) parse.cpp ../graph_parser/util.cpp Floyd-Warshall.cpp -DGEM5_FUSION -o $(BIN_DIR)/fw_hip.gem5 $(CFLAGS) $(LDFLAGS)
 
-include ../common/common.mk
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
+clean:
+	rm -rf $(BIN_DIR)
+
+.PHONY: square clean

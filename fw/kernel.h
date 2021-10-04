@@ -1,4 +1,3 @@
-#include "hip/hip_runtime.h"
 /************************************************************************************\
  *                                                                                  *
  * Copyright © 2014 Advanced Micro Devices, Inc.                                    *
@@ -56,6 +55,11 @@
  *                                                                                  *
 \************************************************************************************/
 
+#ifndef KERNEL_H
+#define KERNEL_H
+
+#include "hip/hip_runtime.h"
+
 /**
  * @brief   naive floyd warshal kernel
  * @param   dist  Distance array
@@ -79,3 +83,5 @@ floydwarshall(int *dist, int *next, int dim, int k)
         }
     }
 }
+
+#endif // KERNEL_H
