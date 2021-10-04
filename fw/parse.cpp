@@ -36,6 +36,7 @@ int* parse_graph_file(int *num_nodes, int *num_edges, char* tmpchar)
 
     if (!fptr) {
         fprintf(stderr, "Error when opening file: %s\n", tmpchar);
+        perror("fopen Error:");
         exit(1);
     }
 

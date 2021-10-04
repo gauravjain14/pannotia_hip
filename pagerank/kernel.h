@@ -1,4 +1,3 @@
-#include "hip/hip_runtime.h"
 /************************************************************************************\
  *                                                                                  *
  * Copyright � 2014 Advanced Micro Devices, Inc.                                    *
@@ -55,6 +54,11 @@
  * website at http://www.bis.doc.gov/.                                              *
  *                                                                                  *
 \************************************************************************************/
+
+#ifndef KERNEL_H
+#define KERNEL_H
+
+#include "hip/hip_runtime.h"
 
 /**
  * @brief   pagerank 1
@@ -136,3 +140,5 @@ inibuffer(int *row, float *page_rank1, float *page_rank2, const int num_nodes,
         page_rank2[tid] = 0.0f;
     }
 }
+
+#endif // KERNEL_H

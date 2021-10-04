@@ -1,30 +1,28 @@
-CPPSRC = ../graph_parser/util.cpp ../graph_parser/parse.cpp
-CUSRC =
+HIP_PATH ?= /opt/rocm/hip
+HIPCC = $(HIP_PATH)/bin/hipcc
+OPTS = -O3
+
 BASEEXE = pagerank
 VARIANT ?= DEFAULT
-# CUDA source files (compiled with cudacc)
 ifeq ($(VARIANT),DEFAULT)
     EXECUTABLE = $(BASEEXE)
-    CUSRC += pagerank.cu
+    CPPFILES += pagerank.cpp
 else ifeq ($(VARIANT),SPMV)
     EXECUTABLE = $(BASEEXE)_spmv
-    CUSRC += pagerank_spmv.cu
+    CPPFILES += pagerank_spmv.cpp
 endif
-OPTS = -O3
-CUOPTS = -arch sm_20
-INC = -I$(NVIDIA_CUDA_SDK_LOCATION)/common/inc -I$(CUDAHOME)/include
-LIBS = -L$(NVIDIA_CUDA_SDK_LOCATION)/lib -lcutil_x86_64
 
-OBJS = $(notdir $(CPPSRC:.cpp=.o))
+BIN_DIR ?= ./bin
 
-all: $(OBJS)
-	nvcc $(NVOPTS) $(OPTS) $(CUOPTS) $(CUSRC) *.o $(INC) -o $(EXECUTABLE) $(LIBS)
+all: $(BIN_DIR)/$(EXECUTABLE)
 
-$(OBJS):
-	g++ -c $(CPPSRC) $(OPTS)
+$(BIN_DIR)/$(EXECUTABLE): $(CPPFILES) ../graph_parser/parse.cpp ../graph_parser/util.cpp $(BIN_DIR)
+	$(HIPCC) $(OPTS) --amdgpu-target=gfx801,gfx803,gfx906 $(CXXFLAGS) ../graph_parser/parse.cpp ../graph_parser/util.cpp $(CPPFILES) -o $(BIN_DIR)/$(EXECUTABLE)
+
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
 
 clean:
-	rm -f *.o *.cu.cpp $(EXECUTABLE)
+	rm -rf $(BIN_DIR)
 
-cleancucpp:
-	rm -f *.cu.cpp
+.PHONY: square clean

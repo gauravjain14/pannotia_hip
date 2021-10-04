@@ -1,4 +1,3 @@
-#include "hip/hip_runtime.h"
 /************************************************************************************\
  *                                                                                  *
  * Copyright � 2014 Advanced Micro Devices, Inc.                                    *
@@ -56,6 +55,10 @@
  *                                                                                  *
 \************************************************************************************/
 
+#ifndef KERNEL_MAX_H
+#define KERNEL_MAX_H
+
+#include "hip/hip_runtime.h"
 
 /**
  * @brief   color kernel 1
@@ -131,3 +134,5 @@ __global__ void color2(int *node_value, int *color_array, int *max_d,
     }
 
 }
+
+#endif // KERNEL_MAX_H

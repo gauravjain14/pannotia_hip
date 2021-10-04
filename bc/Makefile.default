@@ -1,21 +1,22 @@
 CPPSRC = ../graph_parser/util.cpp
-CUSRC = BC.cu
-EXECUTABLE = bc
-OPTS = -O3
-CUOPTS = -arch sm_20
-INC = -I$(NVIDIA_CUDA_SDK_LOCATION)/common/inc -I$(CUDAHOME)/include
-LIBS = -L$(NVIDIA_CUDA_SDK_LOCATION)/lib -lcutil_x86_64
+CPPSRC = BC.cpp
+EXECUTABLE = bc_hip
+OPTS = -O1
 
-OBJS = $(notdir $(CPPSRC:.cpp=.o))
+HIP_PATH ?= /opt/rocm/hip
+HIPCC = $(HIP_PATH)/bin/hipcc
 
-all: $(OBJS)
-	nvcc $(NVOPTS) $(OPTS) $(CUOPTS) $(CUSRC) *.o $(INC) -o $(EXECUTABLE) $(LIBS)
+BIN_DIR ?= ./bin
 
-$(OBJS):
-	g++ -c $(CPPSRC) $(OPTS)
+all: $(BIN_DIR)/$(EXECUTABLE)
+
+$(BIN_DIR)/$(EXECUTABLE): $(CPPSRC) ../graph_parser/util.cpp $(BIN_DIR)
+	$(HIPCC) $(OPTS) --amdgpu-target=gfx801,gfx803,gfx906 $(CXXFLAGS) ../graph_parser/util.cpp $(CPPSRC) -o $(BIN_DIR)/$(EXECUTABLE)
+
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
 
 clean:
-	rm -f *.o *.cu.cpp $(EXECUTABLE)
+	rm -rf $(BIN_DIR)
 
-cleancucpp:
-	rm -f *.cu.cpp
+.PHONY: square clean

@@ -1,4 +1,3 @@
-#include "hip/hip_runtime.h"
 /************************************************************************************\ 
  *                                                                                  *
  * Copyright � 2014 Advanced Micro Devices, Inc.                                    *
@@ -56,7 +55,7 @@
  *                                                                                  *
 \************************************************************************************/
 
-#include <cuda.h>
+#include "hip/hip_runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,10 +67,7 @@
 
 #ifdef GEM5_FUSION
 #include <stdint.h>
-extern "C" {
-void m5_work_begin(uint64_t workid, uint64_t threadid);
-void m5_work_end(uint64_t workid, uint64_t threadid);
-}
+#include <gem5/m5ops.h>
 #endif
 
 #ifdef GEM5_FUSION
@@ -86,7 +82,6 @@ void print_vectorf(float *vector, int num);
 
 int main(int argc, char **argv)
 {
-
     char *tmpchar;
 
     int num_nodes;
@@ -213,7 +208,6 @@ int main(int argc, char **argv)
 
     // Main computation loop
     for (int i = 0; i < num_nodes && i < MAX_ITERS; i++) {
-
         hipLaunchKernelGGL(HIP_KERNEL_NAME(clean_1d_array), dim3(grid), dim3(threads ), 0, 0, i, dist_d, sigma_d, rho_d,
                                             num_nodes);
 
@@ -238,7 +232,7 @@ int main(int argc, char **argv)
             // Another level
             dist++;
 
-        } while (stop) ;
+        } while (stop);
 
         hipDeviceSynchronize();
 
@@ -253,7 +247,6 @@ int main(int argc, char **argv)
             dist--;
         }
         hipDeviceSynchronize();
-
     }
     hipDeviceSynchronize();
     //timer4 = gettime();
@@ -274,7 +267,7 @@ int main(int argc, char **argv)
     //printf("kernel + memcopy time = %lf ms\n", (timer4 - timer3) * 1000);
     //printf("kernel execution time = %lf ms\n", (timer2 - timer1) * 1000);
 
-#if 0
+#if 1
     //dump the results to the file
     print_vectorf(bc_h, num_nodes);
 #endif
@@ -301,7 +294,6 @@ int main(int argc, char **argv)
     hipFree(col_trans_d);
 
     return 0;
-
 }
 
 void print_vector(int *vector, int num)
