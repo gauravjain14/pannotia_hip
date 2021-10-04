@@ -1,6 +1,6 @@
-/************************************************************************************\
+/************************************************************************************\ 
  *                                                                                  *
- * Copyright � 2014 Advanced Micro Devices, Inc.                                    *
+ * Copyright © 2014 Advanced Micro Devices, Inc.                                    *
  * Copyright (c) 2015 Mark D. Hill and David A. Wood                                *
  * All rights reserved.                                                             *
  *                                                                                  *
@@ -55,29 +55,23 @@
  *                                                                                  *
 \************************************************************************************/
 
-#include <cuda.h>
+#include "hip/hip_runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
-#include <algorithm>
 #include "../graph_parser/parse.h"
 #include "../graph_parser/util.h"
-#include "kernel.cu"
+#include "kernel_maxmin.cu"
 
 #ifdef GEM5_FUSION
 #include <stdint.h>
-extern "C" {
-void m5_work_begin(uint64_t workid, uint64_t threadid);
-void m5_work_end(uint64_t workid, uint64_t threadid);
-}
+#include <gem5/m5ops.h>
 #endif
 
 #define RANGE 2048
 
-void dump2file(int *adjmatrix, int num_nodes);
 void print_vector(int *vector, int num);
-void print_vectorf(float *vector, int num);
 
 int main(int argc, char **argv)
 {
@@ -88,12 +82,11 @@ int main(int argc, char **argv)
     int file_format = 1;
     bool directed = 0;
 
-    cudaError_t err = cudaSuccess;
+    hipError_t err = hipSuccess;
 
-    // Input arguments
     if (argc == 3) {
-        tmpchar = argv[1]; // Graph inputfile
-        file_format = atoi(argv[2]); // Choose file format
+        tmpchar = argv[1];  //graph inputfile
+        file_format = atoi(argv[2]); //graph format
     } else {
         fprintf(stderr, "You did something wrong!\n");
         exit(1);
@@ -101,173 +94,166 @@ int main(int argc, char **argv)
 
     srand(7);
 
-    // Allocate the csr array
+    // Allocate the CSR structure
     csr_array *csr;
 
-    // Parse the graph into the csr structure
-    if (file_format == 1) {
+    // Parse graph file and store into a CSR format
+    if (file_format == 1)
         csr = parseMetis(tmpchar, &num_nodes, &num_edges, directed);
-    } else if (file_format == 0) {
+    else if (file_format == 0)
         csr = parseCOO(tmpchar, &num_nodes, &num_edges, directed);
-    } else {
-        fprintf(stderr, "reserve for future");
+    else {
+        printf("reserve for future");
         exit(1);
     }
 
-    // Allocate the node value array
+    // Allocate the vertex value array
     int *node_value = (int *)malloc(num_nodes * sizeof(int));
-    if (!node_value) fprintf(stderr, "malloc failed node_value\n");
+    if (!node_value) fprintf(stderr, "node_value malloc failed\n");
+    // Allocate the color array
+    int *color = (int *)malloc(num_nodes * sizeof(int));
+    if (!color) fprintf(stderr, "color malloc failed\n");
 
-    // Allocate the set array
-    int *s_array = (int *)malloc(num_nodes * sizeof(int));
-    if (!s_array) fprintf(stderr, "malloc failed node_value\n");
-
-    // Randomize the node values
+    // Initialize all the colors to -1
+    // Randomize the value for each vertex
     for (int i = 0; i < num_nodes; i++) {
-        node_value[i] =  rand() % RANGE;
+        color[i] = -1;
+        node_value[i] = rand() % RANGE;
     }
 
-    // Create device side buffers
     int *row_d;
     int *col_d;
+    int *max_d;
+    int *min_d;
 
-    int *c_array_d;
-    int *c_array_u_d;
-    int *s_array_d;
+    int *color_d;
     int *node_value_d;
-    int *min_array_d;
     int *stop_d;
 
-    // Allocate the device-side buffers for the graph
-    err = cudaMalloc(&row_d, num_nodes * sizeof(int));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc row_d (size:%d) => %s\n",  num_nodes , cudaGetErrorString(err));
+    // Create device-side buffers for the graph
+    err = hipMalloc(&row_d, num_nodes * sizeof(int));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc row_d (size:%d) => %s\n",  num_nodes , hipGetErrorString(err));
         return -1;
     }
-    err = cudaMalloc(&col_d, num_edges * sizeof(int));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc col_d (size:%d) => %s\n",  num_edges , cudaGetErrorString(err));
+    err = hipMalloc(&col_d, num_edges * sizeof(int));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc col_d (size:%d): %s\n",  num_edges , hipGetErrorString(err));
         return -1;
     }
 
     // Termination variable
-    err = cudaMalloc(&stop_d, sizeof(int));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc stop_d (size:%d) => %s\n", 1, cudaGetErrorString(err));
+    err = hipMalloc(&stop_d, sizeof(int));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc stop_d (size:%d) => %s\n",  1 , hipGetErrorString(err));
         return -1;
     }
 
-    // Allocate the device-side buffers for mis
-    err = cudaMalloc(&min_array_d, num_nodes * sizeof(int));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc min_array_d (size:%d) => %s\n", num_nodes , cudaGetErrorString(err));
+    // Create device-side buffers for color
+    err = hipMalloc(&color_d, num_nodes * sizeof(int));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc color_d (size:%d) => %s\n", num_nodes , hipGetErrorString(err));
         return -1;
     }
-    err = cudaMalloc(&c_array_d, num_nodes * sizeof(int));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc c_array_d (size:%d) => %s\n", num_nodes , cudaGetErrorString(err));
+    err = hipMalloc(&node_value_d, num_nodes * sizeof(int));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc node_value_d (size:%d) => %s\n", num_nodes , hipGetErrorString(err));
         return -1;
     }
-    err = cudaMalloc(&c_array_u_d, num_nodes * sizeof(int));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc c_array_d (size:%d) => %s\n", num_nodes , cudaGetErrorString(err));
+    err = hipMalloc(&max_d, num_nodes * sizeof(int));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc max_d (size:%d) => %s\n",  num_nodes , hipGetErrorString(err));
         return -1;
     }
-    err = cudaMalloc(&s_array_d, num_nodes * sizeof(int));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc s_array_d (size:%d) => %s\n", num_nodes , cudaGetErrorString(err));
-        return -1;
-    }
-    err = cudaMalloc(&node_value_d, num_nodes * sizeof(int));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc node_value_d (size:%d) => %s\n", num_nodes , cudaGetErrorString(err));
+    err = hipMalloc(&min_d, num_nodes * sizeof(int));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc min_d (size:%d) => %s\n",  num_nodes , hipGetErrorString(err));
         return -1;
     }
 
-    double time1 = gettime();
+    // Copy data to device-side buffers
+    double timer1 = gettime();
 
 #ifdef GEM5_FUSION
     m5_work_begin(0, 0);
 #endif
 
-    // Copy data to device-side buffers
-    err = cudaMemcpy(row_d, csr->row_array, num_nodes * sizeof(int), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMemcpy row_d (size:%d) => %s\n", num_nodes, cudaGetErrorString(err));
+    err = hipMemcpy(color_d, color, num_nodes * sizeof(int), hipMemcpyHostToDevice);
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMemcpy color_d (size:%d) => %s\n", num_nodes, hipGetErrorString(err));
         return -1;
     }
 
-    err = cudaMemcpy(col_d, csr->col_array, num_edges * sizeof(int), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMemcpy col_d (size:%d) => %s\n", num_nodes, cudaGetErrorString(err));
+    err = hipMemcpy(row_d, csr->row_array, num_nodes * sizeof(int), hipMemcpyHostToDevice);
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMemcpy row_d (size:%d) => %s\n", num_nodes, hipGetErrorString(err));
         return -1;
     }
 
-    err = cudaMemcpy(node_value_d, node_value, num_nodes * sizeof(int), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMemcpy feature_d (size:%d) => %s\n", num_nodes, cudaGetErrorString(err));
+    err = hipMemcpy(col_d, csr->col_array, num_edges * sizeof(int), hipMemcpyHostToDevice);
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMemcpy col_d (size:%d) => %s\n", num_nodes, hipGetErrorString(err));
         return -1;
     }
 
-    // Work dimensions
-    int block_size = 128;
+    err = hipMemcpy(node_value_d, node_value, num_nodes * sizeof(int), hipMemcpyHostToDevice);
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMemcpy node_value_d (size:%d) => %s\n", num_nodes, hipGetErrorString(err));
+        return -1;
+    }
+
+    int block_size = 256;
     int num_blocks = (num_nodes + block_size - 1) / block_size;
 
+    // Set up kernel dimensions
     dim3 threads(block_size,  1, 1);
-    dim3 grid(num_blocks, 1, 1);
+    dim3 grid(num_blocks, 1,  1);
 
-    // Launch the initialization kernel
-    init <<<grid, threads>>>(s_array_d, c_array_d, c_array_u_d,
-                             num_nodes, num_edges);
-    cudaThreadSynchronize();
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: init kernel (%s)\n", cudaGetErrorString(err));
-        return -1;
-    }
-
-    // Termination variable
     int stop = 1;
-    int iterations = 0;
+    int graph_color = 1;
+
+    // Initialize arrays
+    hipLaunchKernelGGL(ini, dim3(grid), dim3(threads ), 0, 0, max_d, min_d, num_nodes);
+
+    // Main computation loop
+    double timer3 = gettime();
+
     while (stop) {
+
         stop = 0;
 
         // Copy the termination variable to the device
-        err = cudaMemcpy(stop_d, &stop, sizeof(int), cudaMemcpyHostToDevice);
-        if (err != cudaSuccess) {
-            fprintf(stderr, "ERROR: write stop_d variable (%s)\n", cudaGetErrorString(err));
-            return -1;
+        err = hipMemcpy(stop_d, &stop, sizeof(int), hipMemcpyHostToDevice);
+        if (err != hipSuccess) {
+            fprintf(stderr, "ERROR: write stop_d: %s\n", hipGetErrorString(err));
         }
 
-        // Launch mis1
-        mis1 <<<grid, threads>>>(row_d, col_d, node_value_d, s_array_d,
-                                 c_array_d, min_array_d, stop_d, num_nodes,
-                                 num_edges);
+        // Launch the color kernel 1
+        hipLaunchKernelGGL(color1, dim3(grid), dim3(threads ), 0, 0, row_d, col_d, node_value_d, color_d,
+                                     stop_d, max_d, min_d, graph_color,
+                                     num_nodes, num_edges);
 
-        // Launch mis2
-        mis2 <<<grid, threads>>>(row_d, col_d, node_value_d, s_array_d,
-                                 c_array_d, c_array_u_d, min_array_d, num_nodes,
-                                 num_edges);
+        // Launch the color kernel 2
+        hipLaunchKernelGGL(color2, dim3(grid), dim3(threads ), 0, 0, node_value_d, color_d, max_d, min_d,
+                                     graph_color, num_nodes, num_edges);
 
-        // Launch mis3
-        mis3 <<<grid, threads>>>(c_array_u_d, c_array_d, num_nodes);
-
-        // Copy the termination variable back
-        err = cudaMemcpy(&stop, stop_d, sizeof(int), cudaMemcpyDeviceToHost);
-        if (err != cudaSuccess) {
-            fprintf(stderr, "ERROR: read stop_d variable (%s)\n", cudaGetErrorString(err));
-            return -1;
+        err = hipMemcpy(&stop, stop_d, sizeof(int), hipMemcpyDeviceToHost);
+        if (err != hipSuccess) {
+            fprintf(stderr, "ERROR: read stop_d: %s\n", hipGetErrorString(err));
         }
 
-        iterations++;
+        // Update the color label for the next iter
+        graph_color = graph_color + 2;
 
     }
+    hipDeviceSynchronize();
 
-    cudaThreadSynchronize();
+    double timer4 = gettime();
 
-    err = cudaMemcpy(s_array, s_array_d, num_nodes * sizeof(int), cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMemcpy s_array_d failed (%s)\n", cudaGetErrorString(err));
+    // Copy back the color array
+    err = hipMemcpy(color, color_d, num_nodes * sizeof(int), hipMemcpyDeviceToHost);
+    if (err != hipSuccess) {
+        printf("ERROR: hipMemcpy(): %s\n", hipGetErrorString(err));
         return -1;
     }
 
@@ -275,31 +261,31 @@ int main(int argc, char **argv)
     m5_work_end(0, 0);
 #endif
 
-    double time2 = gettime();
+    double timer2 = gettime();
 
-    // Print out the timing characterisitics
-    printf("number of iterations: %d\n", iterations);
-    printf("kernel + memcpy time %f ms\n", (time2 - time1) * 1000);
+    // Print out color and timing statistics
+    printf("total number of colors used: %d\n", graph_color);
+    printf("kernel time = %lf ms\n", (timer4 - timer3) * 1000);
+    printf("kernel + memcpy time = %lf ms\n", (timer2 - timer1) * 1000);
 
-#if 0
-    // Print the set array
-    print_vector(s_array, num_nodes);
+#if 1
+    // Dump the color array into an output file
+    print_vector(color, num_nodes);
 #endif
 
-    // Clean up the host-side arrays
+    // Free host-side buffers
     free(node_value);
-    free(s_array);
+    free(color);
     csr->freeArrays();
     free(csr);
 
-    // Clean up the device-side arrays
-    cudaFree(row_d);
-    cudaFree(col_d);
-    cudaFree(c_array_d);
-    cudaFree(s_array_d);
-    cudaFree(node_value_d);
-    cudaFree(min_array_d);
-    cudaFree(stop_d);
+    // Free CUDA buffers
+    hipFree(row_d);
+    hipFree(col_d);
+    hipFree(max_d);
+    hipFree(color_d);
+    hipFree(node_value_d);
+    hipFree(stop_d);
 
     return 0;
 
@@ -307,32 +293,13 @@ int main(int argc, char **argv)
 
 void print_vector(int *vector, int num)
 {
-
     FILE * fp = fopen("result.out", "w");
     if (!fp) {
         printf("ERROR: unable to open result.txt\n");
     }
 
-    for (int i = 0; i < num; i++) {
-        fprintf(fp, "%d\n", vector[i]);
-    }
+    for (int i = 0; i < num; i++)
+        fprintf(fp, "%d: %d\n", i + 1, vector[i]);
 
     fclose(fp);
-
-}
-
-void print_vectorf(float *vector, int num)
-{
-
-    FILE * fp = fopen("result.out", "w");
-    if (!fp) {
-        printf("ERROR: unable to open result.txt\n");
-    }
-
-    for (int i = 0; i < num; i++) {
-        fprintf(fp, "%f\n", vector[i]);
-    }
-
-    fclose(fp);
-
 }

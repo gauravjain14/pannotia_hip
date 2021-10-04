@@ -1,20 +1,27 @@
-################################################################################
-#
-# Build script for project
-#
-################################################################################
+CPPSRC = BC.cpp
+EXECUTABLE = bc_hip.gem5
+OPTS = -O1
 
-# Add source files here
-EXECUTABLE	:= bc
-# CUDA source files (compiled with cudacc)
-CUFILES		:= BC.cu
-# CUDA dependency files
-CU_DEPS		:= kernel.cu
-# C/C++ source files (compiled with gcc / c++)
-CCFILES	:= ../graph_parser/util.cpp
-INCFLAGEXTRA	:= -I../graph_parser
+HIP_PATH ?= /opt/rocm/hip
+HIPCC = $(HIP_PATH)/bin/hipcc
 
-################################################################################
-# Rules and targets
+# these are needed for m5ops
+# TODO: Need some sort of explicit PATH?  Read in?
+GEM5_PATH ?= /nobackup/sinclair/gem5
+CFLAGS += -I$(GEM5_PATH)/include -I../graph_parser
+LDFLAGS += -L$(GEM5_PATH)/util/m5/build/x86/out -lm5
 
-include ../common/common.mk
+BIN_DIR ?= ./bin
+
+all: $(BIN_DIR)/$(EXECUTABLE)
+
+$(BIN_DIR)/$(EXECUTABLE): $(CPPSRC) ../graph_parser/util.cpp $(BIN_DIR)
+	$(HIPCC) $(OPTS) --amdgpu-target=gfx801,gfx803 $(CXXFLAGS) ../graph_parser/util.cpp $(CPPSRC) -DGEM5_FUSION -o $(BIN_DIR)/$(EXECUTABLE) $(CFLAGS) $(LDFLAGS)
+
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
+clean:
+	rm -rf $(BIN_DIR)
+
+.PHONY: square clean

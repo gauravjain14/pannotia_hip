@@ -55,21 +55,18 @@
  *                                                                                  *
 \************************************************************************************/
 
-#include <cuda.h>
+#include "hip/hip_runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 #include "../graph_parser/parse.h"
 #include "../graph_parser/util.h"
-#include "kernel.cu"
+#include "kernel_spmv.h"
 
 #ifdef GEM5_FUSION
 #include <stdint.h>
-extern "C" {
-void m5_work_begin(uint64_t workid, uint64_t threadid);
-void m5_work_end(uint64_t workid, uint64_t threadid);
-}
+#include <gem5/m5ops.h>
 #endif
 
 // Iteration count
@@ -86,11 +83,11 @@ int main(int argc, char **argv)
     int file_format = 1;
     bool directed = 0;
 
-    cudaError_t err = cudaSuccess;
+    hipError_t err = hipSuccess;
 
     if (argc == 3) {
         tmpchar = argv[1]; // Graph inputfile
-        file_format = atoi(argv[2]); // File format
+        file_format = atoi(argv[2]);
     } else {
         fprintf(stderr, "You did something wrong!\n");
         exit(1);
@@ -101,59 +98,59 @@ int main(int argc, char **argv)
 
     // Parse graph files into csr structure
     if (file_format == 1) {
-        // Metis
-        csr = parseMetis(tmpchar, &num_nodes, &num_edges, directed);
+       csr = parseMetis_transpose(tmpchar, &num_nodes, &num_edges, directed);
     } else if (file_format == 0) {
-        // Dimacs9
-        csr = parseCOO(tmpchar, &num_nodes, &num_edges, 1);
-    } else if (file_format == 2) {
-        // Matrix market
-        csr = parseMM(tmpchar, &num_nodes, &num_edges, directed, 0);
+       csr = parseCOO_transpose(tmpchar, &num_nodes, &num_edges, directed);
     } else {
-        printf("reserve for future");
-        exit(1);
+       printf("reserve for future");
+       exit(1);
     }
 
-    // Allocate rank_array
-    float *rank_array = (float *)malloc(num_nodes * sizeof(float));
-    if (!rank_array) {
-        fprintf(stderr, "rank array not allocated successfully\n");
-        return -1;
-    }
+    // Allocate rank_arrays
+    float *pagerank_array = (float *)malloc(num_nodes * sizeof(float));
+    if (!pagerank_array) fprintf(stderr, "malloc failed page_rank_array\n");
+    float *pagerank_array2 = (float *)malloc(num_nodes * sizeof(float));
+    if (!pagerank_array2) fprintf(stderr, "malloc failed page_rank_array2\n");
 
     int *row_d;
     int *col_d;
-    int *data_d;
+    float *data_d;
 
     float *pagerank1_d;
     float *pagerank2_d;
+    int *col_cnt_d;
 
     // Create device-side buffers for the graph
-    err = cudaMalloc(&row_d, num_nodes * sizeof(int));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc row_d (size:%d) => %s\n",  num_nodes, cudaGetErrorString(err));
+    err = hipMalloc(&row_d, (num_nodes + 1) * sizeof(int));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc row_d (size:%d) => %s\n",  num_nodes, hipGetErrorString(err));
         return -1;
     }
-    err = cudaMalloc(&col_d, num_edges * sizeof(int));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc col_d (size:%d) => %s\n",  num_edges, cudaGetErrorString(err));
+    err = hipMalloc(&col_d, num_edges * sizeof(int));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc col_d (size:%d) => %s\n",  num_edges, hipGetErrorString(err));
         return -1;
     }
-    err = cudaMalloc(&data_d, num_edges * sizeof(int));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc data_d (size:%d) => %s\n", num_edges, cudaGetErrorString(err));
+    err = hipMalloc(&data_d, num_edges * sizeof(float));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc data_d (size:%d) => %s\n", num_edges, hipGetErrorString(err));
         return -1;
     }
 
     // Create buffers for pagerank
-    err = cudaMalloc(&pagerank1_d, num_nodes * sizeof(float));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc pagerank1_d (size:%d) => %s\n", num_nodes, cudaGetErrorString(err));
+    err = hipMalloc(&pagerank1_d, num_nodes * sizeof(float));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc pagerank1_d (size:%d) => %s\n", num_nodes, hipGetErrorString(err));
         return -1;
     }
-    err = cudaMalloc(&pagerank2_d, num_nodes * sizeof(float));
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMalloc pagerank2_d (size:%d) => %s\n", num_nodes, cudaGetErrorString(err));
+    err = hipMalloc(&pagerank2_d, num_nodes * sizeof(float));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc pagerank2_d (size:%d) => %s\n", num_nodes, hipGetErrorString(err));
+        return -1;
+    }
+    err = hipMalloc(&col_cnt_d, num_nodes * sizeof(int));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMalloc col_cnt_d (size:%d) => %s\n", num_nodes, hipGetErrorString(err));
         return -1;
     }
 
@@ -164,20 +161,26 @@ int main(int argc, char **argv)
 #endif
 
     // Copy the data to the device-side buffers
-    err = cudaMemcpy(row_d, csr->row_array, num_nodes * sizeof(int), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR:#endif cudaMemcpy row_d (size:%d) => %s\n", num_nodes, cudaGetErrorString(err));
+    err = hipMemcpy(row_d, csr->row_array, (num_nodes + 1) * sizeof(int), hipMemcpyHostToDevice);
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR:#endif hipMemcpy row_d (size:%d) => %s\n", num_nodes, hipGetErrorString(err));
         return -1;
     }
 
-    err = cudaMemcpy(col_d, csr->col_array, num_edges * sizeof(int), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMemcpy col_d (size:%d) => %s\n", num_nodes, cudaGetErrorString(err));
+    err = hipMemcpy(col_d, csr->col_array, num_edges * sizeof(int), hipMemcpyHostToDevice);
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMemcpy col_d (size:%d) => %s\n", num_nodes, hipGetErrorString(err));
+        return -1;
+    }
+
+    err = hipMemcpy(col_cnt_d, csr->col_cnt, num_nodes * sizeof(int), hipMemcpyHostToDevice);
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMemcpy col_cnt_d (size:%d) => %s\n", num_nodes, hipGetErrorString(err));
         return -1;
     }
 
     // Set up work dimensions
-    int block_size  = 256;
+    int block_size = 64;
     int num_blocks = (num_nodes + block_size - 1) / block_size;
 
     dim3 threads(block_size, 1, 1);
@@ -186,34 +189,43 @@ int main(int argc, char **argv)
     double timer3 = gettime();
 
     // Launch the initialization kernel
-    inibuffer <<<grid, threads>>>(row_d, pagerank1_d, pagerank2_d, num_nodes,
-                                  num_edges);
-    cudaThreadSynchronize();
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaLaunch failed (%s)\n", cudaGetErrorString(err));
+    hipLaunchKernelGGL(inibuffer, dim3(grid), dim3(threads), 0, 0, pagerank1_d, pagerank2_d, num_nodes);
+    hipDeviceSynchronize();
+    err = hipGetLastError();
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipLaunchByPtr failed (%s)\n", hipGetErrorString(err));
+        return -1;
+    }
+
+    // Initialize the CSR
+    hipLaunchKernelGGL(inicsr, dim3(grid), dim3(threads), 0, 0, row_d, col_d, data_d, col_cnt_d, num_nodes,
+                               num_edges);
+    hipDeviceSynchronize();
+    err = hipGetLastError();
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipLaunchByPtr failed (%s)\n", hipGetErrorString(err));
         return -1;
     }
 
     // Run PageRank for some iter. TO: convergence determination
     for (int i = 0; i < ITER; i++) {
         // Launch pagerank kernel 1
-        pagerank1 <<<grid, threads>>>(row_d, col_d, data_d, pagerank1_d,
-                                      pagerank2_d, num_nodes, num_edges);
+        hipLaunchKernelGGL(spmv_csr_scalar_kernel, dim3(grid), dim3(threads), 0, 0, num_nodes, row_d, col_d,
+                                                   data_d, pagerank1_d,
+                                                   pagerank2_d);
 
         // Launch pagerank kernel 2
-        pagerank2 <<<grid, threads>>>(row_d, col_d, data_d, pagerank1_d,
-                                      pagerank2_d, num_nodes, num_edges);
+        hipLaunchKernelGGL(pagerank2, dim3(grid), dim3(threads), 0, 0, pagerank1_d, pagerank2_d, num_nodes);
     }
-    cudaThreadSynchronize();
+    hipDeviceSynchronize();
 
     double timer4 = gettime();
 
     // Copy the rank buffer back
-    err = cudaMemcpy(rank_array, pagerank1_d, num_nodes * sizeof(float), cudaMemcpyDeviceToHost);
+    err = hipMemcpy(pagerank_array, pagerank1_d, num_nodes * sizeof(float), hipMemcpyDeviceToHost);
 
-    if (err != cudaSuccess) {
-        fprintf(stderr, "ERROR: cudaMemcpy() failed (%s)\n", cudaGetErrorString(err));
+    if (err != hipSuccess) {
+        fprintf(stderr, "ERROR: hipMemcpy() failed (%s)\n", hipGetErrorString(err));
         return -1;
     }
 
@@ -229,24 +241,24 @@ int main(int argc, char **argv)
 
 #if 1
     // Print rank array
-    print_vectorf(rank_array, num_nodes);
+    print_vectorf(pagerank_array, num_nodes);
 #endif
 
     // Free the host-side arrays
-    free(rank_array);
+    free(pagerank_array);
+    free(pagerank_array2);
     csr->freeArrays();
     free(csr);
 
     // Free the device buffers
-    cudaFree(row_d);
-    cudaFree(col_d);
-    cudaFree(data_d);
+    hipFree(row_d);
+    hipFree(col_d);
+    hipFree(data_d);
 
-    cudaFree(pagerank1_d);
-    cudaFree(pagerank2_d);
+    hipFree(pagerank1_d);
+    hipFree(pagerank2_d);
 
     return 0;
-
 }
 
 void print_vectorf(float *vector, int num)

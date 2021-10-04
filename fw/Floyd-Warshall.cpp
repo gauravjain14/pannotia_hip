@@ -1,4 +1,3 @@
-#include "hip/hip_runtime.h"
 /************************************************************************************\ 
  *                                                                                  *
  * Copyright © 2014 Advanced Micro Devices, Inc.                                    *
@@ -56,7 +55,7 @@
  *                                                                                  *
 \************************************************************************************/
 
-#include <cuda.h>
+#include "hip/hip_runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,10 +67,7 @@
 
 #ifdef GEM5_FUSION
 #include <stdint.h>
-extern "C" {
-void m5_work_begin(uint64_t workid, uint64_t threadid);
-void m5_work_end(uint64_t workid, uint64_t threadid);
-}
+#include <gem5/m5ops.h>
 #endif
 
 #ifdef GEM5_FUSION
@@ -212,14 +208,14 @@ int main(int argc, char **argv)
         for (int i = 0; i < dim; i++) {
             for (int j = 0; j < dim; j++) {
                 if (dist[i * dim + j] !=  result[i * dim + j]) {
-                    printf("mismatch at (%d, %d)\n", i, j);
+                    fprintf(stderr, "mismatch at (%d, %d)\n", i, j);
                     check_flag = 1;
                 }
             }
         }
         // If there is mismatch, report
         if (check_flag) {
-            fprintf(stderr, "WARNING: Produced incorrect results!\n");
+            fprintf(stdout, "WARNING: Produced incorrect results!\n");
         } else {
             printf("Results are correct!\n");
         }
@@ -237,5 +233,4 @@ int main(int argc, char **argv)
     hipFree(next_d);
 
     return 0;
-
 }

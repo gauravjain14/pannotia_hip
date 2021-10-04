@@ -37,7 +37,7 @@
  *                                                                                  *
  * If you use the software (in whole or in part), you shall adhere to all           *
  * applicable U.S., European, and other export laws, including but not limited to   *
- * the U.S. Export Administration Regulations ("EAR"�) (15 C.F.R Sections 730-774),  *
+ * the U.S. Export Administration Regulations ("EAR") (15 C.F.R Sections 730-774),  *
  * and E.U. Council Regulation (EC) No 428/2009 of 5 May 2009.  Further, pursuant   *
  * to Section 740.6 of the EAR, you hereby certify that, except pursuant to a       *
  * license granted by the United States Department of Commerce Bureau of Industry   *
@@ -55,105 +55,108 @@
  *                                                                                  *
 \************************************************************************************/
 
-#define BIG_NUM 999999
+#ifndef KERNEL_SPMV_H
+#define KERNEL_SPMV_H
+
+#include "hip/hip_runtime.h"
 
 /**
- * @brief   color kernel 1
- * @param   row         CSR pointer array
- * @param   col         CSR column array
- * @param   node_value  Vertex value array
- * @param   color_array Color value array
- * @param   stop        Termination variable
- * @param   max_d       Max array
- * @param   max_d       Min array
- * @param   color       Current color label
- * @param   num_nodes   Number of vertices
- * @param   num_edges   Number of edges
+ * @brief   inibuffer
+ * @param   page_rank1   PageRank array 1
+ * @param   page_rank2   PageRank array 2
+ * @param   num_nodes    number of vertices
  */
-__global__ void color1(int *row, int *col, int *node_value, int *color_array,
-                       int *stop, int *max_d, int *min_d, const int color,
-                       const int num_nodes, const int num_edges)
+__global__ void
+inibuffer(float *page_rank1, float *page_rank2, const int num_nodes)
 {
     // Get my workitem id
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    // Initialize two pagerank arrays
     if (tid < num_nodes) {
-        // If the vertex is not colored
-        if (color_array[tid] == -1) {
+        page_rank1[tid] = 1 / (float)num_nodes;
+        page_rank2[tid] = 0.0f;
+    }
+}
 
-            // Get the start and end pointers for the neighbor list
-            int start = row[tid];
-            int end;
-            if (tid + 1 < num_nodes)
-                end = row[tid + 1];
-            else
-                end = num_edges;
+/**
+ * @brief   inicsr
+ * @param   row        csr pointer array
+ * @param   col        csr col array
+ * @param   data       csr weigh array
+ * @param   col_cnt    array for #. out-going edges
+ * @param   num_nodes  number of vertices
+ * @param   num_edges  number of edges
+ */
+__global__ void
+inicsr(int *row, int *col, float *data, int *col_cnt, int num_nodes,
+       int num_edges)
+{
+    // Get my workitem id
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    if (tid < num_nodes) {
+        // Get the starting and ending pointers
+        int start = row[tid];
+        int end;
+        if (tid + 1 < num_nodes) {
+            end = row[tid + 1] ;
+        } else {
+            end = num_edges;
+        }
 
-            int maximum = -1;
-            int minimum = BIG_NUM;
-            // Navigate the neighborlist
-            for (int edge = start; edge < end; edge++) {
-                if (color_array[col[edge]] == -1 && start != end - 1) {
-                    *stop = 1;
-                    // Determine if the vertex value is the maximum/minimum in the neighborhood
-                    if (node_value[col[edge]] > maximum)
-                        maximum = node_value[col[edge]];
-                    if (node_value[col[edge]] < minimum)
-                        minimum = node_value[col[edge]];
-                }
-            }
-            // Assign the maximum/miminum value to max/min array
-            max_d[tid] = maximum;
-            min_d[tid] = minimum;
+        int nid;
+        // Navigate one row of data
+        for (int edge = start; edge < end; edge++) {
+            nid = col[edge];
+            // Each neighbor will get equal amount of pagerank
+            data[edge] = 1.0 / (float)col_cnt[nid];
         }
     }
 }
 
 /**
- * @brief   color kernel 2
- * @param   node_value  Vertex value array
- * @param   color_array Color value array
- * @param   max_d       Max array
- * @param   min_d       Min array
- * @param   color       Current color label
- * @param   num_nodes   Number of vertices
- * @param   num_edges   Number of edges
+ * @brief   spmv_csr_scalar_kernel (simple spmv)
+ * @param   num_nodes  number of vertices
+ * @param   row        csr pointer array
+ * @param   col        csr col array
+ * @param   data       csr weigh array
+ * @param   x          input vector
+ * @param   y          output vector
  */
-__global__ void color2(int *node_value, int *color_array, int *max_d,
-                       int *min_d, const int color, const int num_nodes,
-                       const int num_edges)
+__global__ void
+spmv_csr_scalar_kernel(const int num_nodes, int *row, int *col, float *data,
+                       float *x, float *y)
 {
     // Get my workitem id
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
     if (tid < num_nodes) {
-        // If the vertex is still not colored
-        if (color_array[tid] == -1) {
-            // Assign a color
-            if (node_value[tid] >= max_d[tid])
-                color_array[tid] = color;
-            if (node_value[tid] <= min_d[tid])
-                color_array[tid] = color + 1;
+        // Get the start and end pointers
+        int row_start = row[tid];
+        int row_end = row[tid + 1];
+        float sum = 0;
+        //navigate one row and sum all the elements
+        for (int j = row_start; j < row_end; j++) {
+            sum += data[j] * x[col[j]];
         }
+        y[tid] += sum;
     }
-
 }
 
 /**
- * @brief   init kernel
- * @param   max_d       Max array
- * @param   min_d       Min array
- * @param   num_nodes   Number of vertices
+ * @brief   pagerank2
+ * @param   page_rank1   PageRank array 1
+ * @param   page_rank2   PageRank array 2
+ * @param   num_nodes    number of vertices
  */
-__global__ void ini(int *max_d, int *min_d, const int num_nodes)
+__global__ void
+pagerank2(float *page_rank1, float *page_rank2, const int num_nodes)
 {
     // Get my workitem id
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // Initialize max: -1 and min: Big_num
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    // Update pagerank value with damping factor
     if (tid < num_nodes) {
-        max_d[tid] = -1;
-        min_d[tid] = BIG_NUM;
+        page_rank1[tid]	= 0.15f / (float)num_nodes + 0.85f * page_rank2[tid];
+        page_rank2[tid] = 0.0f;
     }
-
 }
+
+#endif // KERNEL_SPMV_H

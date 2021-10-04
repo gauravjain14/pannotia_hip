@@ -1,31 +1,34 @@
-################################################################################
-#
-# Build script for project
-#
-################################################################################
+HIP_PATH ?= /opt/rocm/hip
+HIPCC = $(HIP_PATH)/bin/hipcc
+OPTS = -O3
 
-# Add source files here
-BASEEXE		:= pagerank
+# these are needed for m5ops
+# TODO: Need some sort of explicit PATH?  Read in?
+GEM5_PATH ?= /nobackup/sinclair/gem5
+CFLAGS += -I$(GEM5_PATH)/include -I/../graph_parser
+LDFLAGS += -L$(GEM5_PATH)/util/m5/build/x86/out -lm5
+
+BASEEXE = pagerank
 VARIANT ?= DEFAULT
-# CUDA source files (compiled with cudacc)
-CUFILES		:= 
-CU_DEPS		:= 
-# C/C++ source files (compiled with gcc / c++)
-CCFILES    := ../graph_parser/util.cpp ../graph_parser/parse.cpp
 ifeq ($(VARIANT),DEFAULT)
-	EXECUTABLE = $(BASEEXE)
-	CUFILES += pagerank.cu
-	CU_DEPS += kernel.cu
+    EXECUTABLE = $(BASEEXE).gem5
+    CPPFILES += pagerank.cpp
 else ifeq ($(VARIANT),SPMV)
-	EXECUTABLE = $(BASEEXE)_spmv
-	CUFILES += pagerank_spmv.cu
-	CU_DEPS += kernel_spmv.cu
+    EXECUTABLE = $(BASEEXE)_spmv.gem5
+    CPPFILES += pagerank_spmv.cpp
 endif
 
-INCFLAGEXTRA	:= -I../graph_parser
+BIN_DIR ?= ./bin
 
+all: $(BIN_DIR)/$(EXECUTABLE)
 
-################################################################################
-# Rules and targets
+$(BIN_DIR)/$(EXECUTABLE): $(CPPFILES) ../graph_parser/parse.cpp ../graph_parser/util.cpp $(BIN_DIR)
+	$(HIPCC) $(OPTS) --amdgpu-target=gfx801,gfx803 $(CXXFLAGS) ../graph_parser/parse.cpp ../graph_parser/util.cpp $(CPPFILES) -DGEM5_FUSION -o $(BIN_DIR)/$(EXECUTABLE) $(CFLAGS) $(LDFLAGS)
 
-include ../common/common.mk
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
+clean:
+	rm -rf $(BIN_DIR)
+
+.PHONY: square clean
